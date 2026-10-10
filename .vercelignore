@@ -1,0 +1,11 @@
+.vs
+.git
+ShamsAppData
+ShamsAppData_dev
+node_modules
+dist-electron
+release
+
+Output-App
+
+build-release

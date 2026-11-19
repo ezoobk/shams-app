@@ -14,7 +14,7 @@ const winUnpackedDir = path.join(releaseDir, 'win-unpacked');
 
 // 1. Kill any running Shams App instances that may lock files
 console.log('\n🔍 Checking for running app instances...');
-spawnSync('taskkill', ['/F', '/IM', 'Shams App.exe'], { shell: true });
+spawnSync('taskkill', ['/F', '/IM', '"Shams App.exe"'], { shell: true });
 spawnSync('taskkill', ['/F', '/IM', 'electron.exe'], { shell: true });
 
 // Give OS time to release file locks
@@ -46,12 +46,17 @@ if (fs.existsSync(releaseDir)) {
     }
   }
 
-  // Remove win-unpacked directory to avoid asar lock issues
+  // Remove win-unpacked and win-unpacked.tmp directories to avoid asar lock issues
+  const tmpDir = path.join(releaseDir, 'win-unpacked.tmp');
+  if (fs.existsSync(tmpDir)) {
+    try { spawnSync('rd', ['/s', '/q', tmpDir], { shell: true }); } catch (e) {}
+  }
+
   if (fs.existsSync(winUnpackedDir)) {
     console.log('🗑️  Removing old win-unpacked directory...');
     try {
       spawnSync('rd', ['/s', '/q', winUnpackedDir], { shell: true });
-      wait(1000);
+      wait(2500);
       console.log('✅ win-unpacked removed successfully.');
     } catch (e) {
       console.warn(`⚠️  Could not remove win-unpacked: ${e.message}`);

@@ -9,6 +9,9 @@ import { useWorkOrders } from '../../context/WorkOrdersContext';
 import { Calculator, Plus, Trash2, Edit, Save, FileText, Check, Printer, X, Eye, EyeOff, LayoutDashboard, Database, Tags, ArrowUp, ArrowDown, Factory, List, ChevronUp, ChevronDown, Search } from 'lucide-react';
 import { formatCurrency, numberToArabicWords } from '../../utils/formatters';
 import { CustomerSelect } from '../../components/ui/CustomerSelect';
+import { AttachmentsGalleryModal } from '../../components/ui/AttachmentsGalleryModal';
+import { logAudit } from '../../context/AuditLogContext';
+import { getEstimateAttachments } from '../../api/client';
 
 export const CostCalculatorView = ({ setViewState }: { setViewState: (state: string) => void }) => {
     const { hasPermission } = useAuth();
@@ -18,8 +21,57 @@ export const CostCalculatorView = ({ setViewState }: { setViewState: (state: str
     const { masterMaterials, setMasterMaterials, worksOf, setWorksOf, masterItems, setMasterItems } = useMaterials();
     const { customers, setCustomers } = useCustomers();
     const { workOrders, setWorkOrders } = useWorkOrders();
+    const [isGalleryOpen, setIsGalleryOpen] = useState(false);
+    const [galleryIndex, setGalleryIndex] = useState(0);
     const isSameEstimate = calculatorDraftRef.current && calculatorDraftRef.current.estimateId === (editingEstimate ? editingEstimate.id : null);
     const normalizeText = (text) => (text || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+    const getNormalizedSectionMats = (mats: any[], secId: string) => {
+      return (mats || [])
+        .filter(m => (String(m.worksOf || '') === String(secId) || (!m.worksOf && String(secId) === 'other')) && m.isVisible !== false)
+        .map(m => ({
+          name: (m.name || m.itemName || '').trim(),
+          qty: Number(m.qty || 0),
+          price: Number(m.price || 0),
+          unit: (m.unit || '').trim()
+        }))
+        .filter(m => m.name !== '' || m.qty > 0)
+        .sort((a, b) => a.name.localeCompare(b.name));
+    };
+
+    const didSectionMaterialsChange = (oldMats: any[], newMats: any[], secId: string) => {
+      const oldNorm = getNormalizedSectionMats(oldMats, secId);
+      const newNorm = getNormalizedSectionMats(newMats, secId);
+      if (oldNorm.length !== newNorm.length) return true;
+      for (let i = 0; i < oldNorm.length; i++) {
+        if (oldNorm[i].name !== newNorm[i].name ||
+            oldNorm[i].qty !== newNorm[i].qty ||
+            oldNorm[i].price !== newNorm[i].price ||
+            oldNorm[i].unit !== newNorm[i].unit) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    const findMasterMaterial = (mat: any) => {
+      if (!mat) return null;
+      if (mat.masterId != null) {
+        const cleanMasterId = String(mat.masterId).replace(/\.0$/, '').trim();
+        const found = masterMaterials.find(mm => String(mm.id).replace(/\.0$/, '').trim() === cleanMasterId);
+        if (found) return found;
+      }
+      const cleanName = (mat.name || mat.fullName || '').trim();
+      if (cleanName) {
+        const norm = normalizeText(cleanName);
+        const found = masterMaterials.find(mm => 
+          normalizeText(mm.name) === norm || 
+          (mm.shortName && normalizeText(mm.shortName) === norm)
+        );
+        if (found) return found;
+      }
+      return null;
+    };
 
     const [specs, setSpecs] = useState(() => {
       if (isSameEstimate) return calculatorDraftRef.current.specs;
@@ -94,6 +146,16 @@ export const CostCalculatorView = ({ setViewState }: { setViewState: (state: str
       if (editingEstimate) return editingEstimate.attachments || [];
       return [];
     });
+
+    useEffect(() => {
+      if (editingEstimate && Array.isArray(attachments) && attachments.some((a: any) => a && a.hasData && !a.data)) {
+        getEstimateAttachments(editingEstimate.id).then(res => {
+          if (res.success && res.data) {
+            setAttachments(res.data);
+          }
+        }).catch(err => console.error('Failed to load estimate attachments in calculator:', err));
+      }
+    }, [editingEstimate?.id]);
 
     const [initialStateStr] = useState(() => {
       if (isSameEstimate && calculatorDraftRef.current?.initialStateStr) {
@@ -197,15 +259,14 @@ export const CostCalculatorView = ({ setViewState }: { setViewState: (state: str
       if (editingEstimate && !isSameEstimate) {
         let outdatedMaterials = [];
         materials.forEach((mat, idx) => {
-          if (mat.masterId) {
-            const masterMat = masterMaterials.find(m => m.id === mat.masterId);
-            if (masterMat && Number(masterMat.defaultPrice) !== Number(mat.price)) {
-              outdatedMaterials.push({
-                idx, matId: mat.id, masterId: mat.masterId, name: mat.name,
-                oldPrice: mat.price, newPrice: masterMat.defaultPrice,
-                action: 'accept', modifiedPrice: masterMat.defaultPrice
-              });
-            }
+          if (!mat.name) return;
+          const masterMat = findMasterMaterial(mat);
+          if (masterMat && Number(masterMat.defaultPrice) !== Number(mat.price)) {
+            outdatedMaterials.push({
+              idx, matId: mat.id, masterId: masterMat.id, name: mat.name,
+              oldPrice: mat.price, newPrice: masterMat.defaultPrice,
+              action: 'accept', modifiedPrice: masterMat.defaultPrice
+            });
           }
         });
         if (outdatedMaterials.length > 0) {
@@ -410,15 +471,16 @@ export const CostCalculatorView = ({ setViewState }: { setViewState: (state: str
       }
 
       resolvedChanges.forEach(change => {
+        const cleanChangeId = String(change.masterId).replace(/\.0$/, '').trim();
         if (change.action === 'modify') {
           finalMaterials[change.idx].price = change.modifiedPrice;
-          const masterIdx = updatedMasters.findIndex(m => m.id === change.masterId);
+          const masterIdx = updatedMasters.findIndex(m => String(m.id).replace(/\.0$/, '').trim() === cleanChangeId);
           if (masterIdx !== -1) {
             updatedMasters[masterIdx].defaultPrice = change.modifiedPrice;
             changedMasterPrices[change.masterId] = change.modifiedPrice;
           }
         } else if (change.action === 'update') {
-          const masterIdx = updatedMasters.findIndex(m => m.id === change.masterId);
+          const masterIdx = updatedMasters.findIndex(m => String(m.id).replace(/\.0$/, '').trim() === cleanChangeId);
           if (masterIdx !== -1) {
             updatedMasters[masterIdx].defaultPrice = change.newPrice;
             changedMasterPrices[change.masterId] = change.newPrice;
@@ -457,7 +519,7 @@ export const CostCalculatorView = ({ setViewState }: { setViewState: (state: str
       const newProfit = Number(sellPrice) - newTotalCost;
 
       const estimateData = {
-        id: asNew || !editingEstimate ? Date.now() : editingEstimate.id,
+        id: asNew || !editingEstimate ? String(Date.now()) : String(editingEstimate.id).replace(/\.0$/, ''),
         ...specs,
         materials: finalMaterials,
         totalCost: newTotalCost,
@@ -476,6 +538,72 @@ export const CostCalculatorView = ({ setViewState }: { setViewState: (state: str
           ...estimateData,
         };
         console.log('Saving WO estimate:', finalWOItem);
+
+        // حماية جودة وتطابق التصنيع: إذا كان القسم مكتمل وتم تعديل المواد أو المواصفات، يتم إرجاعه تلقائياً إلى غير مكتمل
+        if (!asNew && editingEstimate) {
+          let existingStatuses: any[] = Array.isArray(editingEstimate.sectionStatuses)
+            ? [...editingEstimate.sectionStatuses]
+            : [];
+
+          // إذا لم تكن هناك حالات أقسام مسجلة مسبقاً ولكن المنتج كان معلماً كـ "جاهز"، نعتبر الأقسام الحالية مكتملة لاختبار التعديل
+          if (existingStatuses.length === 0 && (editingEstimate.mfgStatus === 'جاهز' || editingEstimate.status === 'جاهز')) {
+            existingStatuses = (worksOf || []).map(w => ({
+              sectionId: String(w.id),
+              sectionName: w.name,
+              isCompleted: true,
+              completedAt: editingEstimate.date || new Date().toISOString()
+            }));
+          }
+
+          const dimensionsChanged =
+            String(editingEstimate.length ?? '') !== String(estimateData.length ?? '') ||
+            String(editingEstimate.width ?? '') !== String(estimateData.width ?? '') ||
+            String(editingEstimate.height ?? '') !== String(estimateData.height ?? '') ||
+            String(editingEstimate.chassis ?? '').trim() !== String(estimateData.chassis ?? '').trim();
+
+          const revertedSectionNames: string[] = [];
+
+          const updatedSectionStatuses = existingStatuses.map(sec => {
+            if (!sec.isCompleted) return sec;
+
+            const matsChanged = didSectionMaterialsChange(editingEstimate.materials, estimateData.materials, sec.sectionId);
+
+            if (matsChanged || dimensionsChanged) {
+              revertedSectionNames.push(sec.sectionName);
+              return {
+                ...sec,
+                isCompleted: false,
+                completedAt: undefined,
+                durationDays: undefined
+              };
+            }
+            return sec;
+          });
+
+          if (revertedSectionNames.length > 0) {
+            finalWOItem.sectionStatuses = updatedSectionStatuses;
+            finalWOItem.mfgStatus = 'قيد التصنيع';
+            finalWOItem.status = 'قيد التصنيع';
+            finalWOItem.completedAt = undefined;
+            finalWOItem.completionDays = undefined;
+            alert(
+              `⚠️ حماية جودة وتطابق التصنيع:\n\n` +
+              `تم إرجاع حالة الأقسام التالية إلى (غير مكتمل / قيد التصنيع) بسبب تعديل المواد أو المواصفات التابعة لها:\n` +
+              revertedSectionNames.map(s => `• ${s}`).join('\n') +
+              `\n\nتم تحديث حالة المنتج العامة إلى "قيد التصنيع".`
+            );
+          } else if (existingStatuses.length > 0) {
+            finalWOItem.sectionStatuses = updatedSectionStatuses;
+            const allComplete = updatedSectionStatuses.length > 0 && updatedSectionStatuses.every(s => s.isCompleted);
+            if (!allComplete && (finalWOItem.mfgStatus === 'جاهز' || finalWOItem.status === 'جاهز')) {
+              finalWOItem.mfgStatus = 'قيد التصنيع';
+              finalWOItem.status = 'قيد التصنيع';
+              finalWOItem.completedAt = undefined;
+              finalWOItem.completionDays = undefined;
+            }
+          }
+        }
+
         if (asNew) {
           finalWOItem.id = Date.now();
           finalWOItem.serialNumber = generateId('sn');
@@ -491,10 +619,46 @@ export const CostCalculatorView = ({ setViewState }: { setViewState: (state: str
             return wo;
           }));
         }
+        const targetWo = workOrders.find(wo => wo.id === woId);
+        logAudit({
+          actionType: 'edit',
+          entityType: 'أوامر التصنيع',
+          entityId: `${woId} (${finalWOItem.serialNumber})`,
+          title: `تعديل مواد أمر التصنيع: ${finalWOItem.desc || ''}`,
+          details: `رقم أمر التصنيع: ${woId} | الرقم التسلسلي: ${finalWOItem.serialNumber} | التكلفة: ${formatCurrency(newTotalCost)}`,
+          targetCollection: 'work_orders',
+          previousState: targetWo,
+          nextState: targetWo ? {
+            ...targetWo,
+            items: targetWo.items.map((i: any) => i.serialNumber === finalWOItem.serialNumber ? finalWOItem : i)
+          } : undefined
+        });
       } else {
         console.log('Saving normal estimate:', estimateData);
-        if (asNew || !editingEstimate) setEstimates([estimateData, ...estimates]);
-        else setEstimates(estimates.map(e => e.id === estimateData.id ? estimateData : e));
+        if (asNew || !editingEstimate) {
+          logAudit({
+            actionType: 'create',
+            entityType: 'التقديرات',
+            entityId: String(estimateData.id),
+            title: `إضافة تقدير جديد: ${estimateData.desc || ''}`,
+            details: `سعر البيع المقترح: ${formatCurrency(estimateData.sellPrice)} | الشاصية: ${estimateData.chassis || '--'}`,
+            targetCollection: 'estimates',
+            nextState: estimateData
+          });
+          setEstimates([estimateData, ...estimates]);
+        } else {
+          logAudit({
+            actionType: 'edit',
+            entityType: 'التقديرات',
+            entityId: String(estimateData.id),
+            title: `تعديل تقدير: ${estimateData.desc || ''}`,
+            details: `سعر البيع: ${formatCurrency(estimateData.sellPrice)} | الشاصية: ${estimateData.chassis || '--'}`,
+            targetCollection: 'estimates',
+            previousState: editingEstimate,
+            nextState: estimateData
+          });
+          setEstimates(estimates.map(e => e.id === estimateData.id ? estimateData : e));
+        }
       }
 
       setViewState('list');
@@ -520,7 +684,7 @@ export const CostCalculatorView = ({ setViewState }: { setViewState: (state: str
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
             <Factory className="w-6 h-6 text-blue-600" />
-            {editingEstimate ? 'تعديل التقدير' : 'حاسبة تكلفة منتج جديد'}
+            {editingContext?.type === 'workOrder' ? 'تعديل مواد أمر التصنيع' : (editingEstimate ? 'تعديل التقدير' : 'حاسبة تكلفة منتج جديد')}
           </h2>
           <button onClick={handleCloseDirectly} className="text-slate-400 hover:text-slate-600"><X className="w-6 h-6" /></button>
         </div>
@@ -722,8 +886,8 @@ export const CostCalculatorView = ({ setViewState }: { setViewState: (state: str
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {attachments.map((att, i) => (
-                <div key={i} className="border border-slate-200 bg-white p-2 rounded relative group">
-                  <button onClick={() => removeAttachment(i)} className="absolute top-1 left-1 bg-red-500 text-white rounded p-1 opacity-0 group-hover:opacity-100 transition-opacity z-10"><X className="w-4 h-4" /></button>
+                <div key={i} className="border border-slate-200 bg-white p-2 rounded relative group cursor-pointer hover:border-blue-400 hover:shadow-md transition-all" onClick={() => { setGalleryIndex(i); setIsGalleryOpen(true); }}>
+                  <button onClick={(e) => { e.stopPropagation(); removeAttachment(i); }} className="absolute top-1 left-1 bg-red-500 hover:bg-red-600 text-white rounded p-1 opacity-0 group-hover:opacity-100 transition-opacity z-10" title="حذف الصورة"><X className="w-4 h-4" /></button>
                   <img src={att.data} alt={att.name} className="w-full h-32 object-cover rounded" />
                 </div>
               ))}
@@ -965,21 +1129,29 @@ export const CostCalculatorView = ({ setViewState }: { setViewState: (state: str
           <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md flex flex-col ">
               <div className="p-6 border-b border-slate-200">
-                <h2 className="text-xl font-bold text-slate-800">إغلاق التقدير</h2>
-                <p className="text-sm text-slate-500 mt-2">لديك تقدير مفتوح، ماذا تريد أن تفعل قبل الإغلاق؟</p>
+                <h2 className="text-xl font-bold text-slate-800">
+                  {editingContext?.type === 'workOrder' ? 'إغلاق مواد أمر التصنيع' : 'إغلاق التقدير'}
+                </h2>
+                <p className="text-sm text-slate-500 mt-2">
+                  {editingContext?.type === 'workOrder' 
+                    ? 'لديك تعديلات على مواد أمر التصنيع، ماذا تريد أن تفعل قبل الإغلاق؟' 
+                    : 'لديك تقدير مفتوح، ماذا تريد أن تفعل قبل الإغلاق؟'}
+                </p>
               </div>
               <div className="p-6 flex flex-col gap-3 bg-slate-50 rounded-b-xl">
                 <button onClick={() => { setShowClosePrompt(false); handleSaveClick(false); }} className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 shadow flex items-center justify-center gap-2">
-                  <Save className="w-5 h-5" /> حفظ التقدير والإغلاق
+                  <Save className="w-5 h-5" /> {editingContext?.type === 'workOrder' ? 'حفظ التعديلات والإغلاق' : 'حفظ التقدير والإغلاق'}
                 </button>
-                <button onClick={() => { setShowClosePrompt(false); handleSaveClick(true); }} className="w-full bg-emerald-600 text-white py-3 rounded-lg font-bold hover:bg-emerald-700 shadow flex items-center justify-center gap-2">
-                  <Plus className="w-5 h-5" /> حفظ كجديد والإغلاق
-                </button>
+                {editingContext?.type !== 'workOrder' && (
+                  <button onClick={() => { setShowClosePrompt(false); handleSaveClick(true); }} className="w-full bg-emerald-600 text-white py-3 rounded-lg font-bold hover:bg-emerald-700 shadow flex items-center justify-center gap-2">
+                    <Plus className="w-5 h-5" /> حفظ كجديد والإغلاق
+                  </button>
+                )}
                 <button onClick={() => { setShowClosePrompt(false); setViewState('list'); setEditingEstimate(null); setEditingContext(null); calculatorDraftRef.current = null; }} className="w-full bg-red-100 text-red-600 py-3 rounded-lg font-bold hover:bg-red-200">
                   إغلاق دون حفظ التغييرات
                 </button>
                 <button onClick={() => setShowClosePrompt(false)} className="w-full bg-slate-200 text-slate-700 py-3 rounded-lg font-bold hover:bg-slate-300 mt-2">
-                  إلغاء والعودة للتقدير
+                  {editingContext?.type === 'workOrder' ? 'إلغاء والعودة للمواد' : 'إلغاء والعودة للتقدير'}
                 </button>
               </div>
             </div>
@@ -1090,7 +1262,7 @@ export const CostCalculatorView = ({ setViewState }: { setViewState: (state: str
           const mat = materials.find(m => m.id === priceModal.matId);
           if (!mat) return null;
           const w = worksOf.find(w => w.id === mat.worksOf);
-          const masterMat = mat.masterId ? masterMaterials.find(mm => mm.id === mat.masterId) : null;
+          const masterMat = findMasterMaterial(mat);
           const currentTotal = mat.qty * Number(priceModal.price);
 
           const handleSaveLocal = () => {
@@ -1102,11 +1274,33 @@ export const CostCalculatorView = ({ setViewState }: { setViewState: (state: str
 
           const handleSaveMaster = () => {
             const newPrice = Number(priceModal.price);
-            const updatedMaterials = materials.map(m => m.id === mat.id ? { ...m, price: newPrice } : m);
+            const targetMaster = masterMat || {
+              id: Date.now().toString(),
+              name: mat.fullName || mat.name,
+              shortName: mat.name,
+              defaultPrice: newPrice,
+              unit: mat.unit || 'قطعة',
+              worksOfIds: mat.worksOf ? [mat.worksOf] : []
+            };
+
+            const updatedMaterials = materials.map(m => m.id === mat.id ? { 
+              ...m, 
+              price: newPrice,
+              masterId: targetMaster.id
+            } : m);
             if (calculatorDraftRef.current) calculatorDraftRef.current.materials = updatedMaterials;
             setMaterials(updatedMaterials);
-            if (masterMat) {
-              setMasterMaterials(prev => prev.map(mm => mm.id === masterMat.id ? { ...mm, defaultPrice: newPrice } : mm));
+
+            const cleanTargetId = String(targetMaster.id).replace(/\.0$/, '').trim();
+            const existsInMaster = masterMaterials.some(mm => String(mm.id).replace(/\.0$/, '').trim() === cleanTargetId);
+            if (existsInMaster) {
+              setMasterMaterials(prev => prev.map(mm => 
+                String(mm.id).replace(/\.0$/, '').trim() === cleanTargetId 
+                  ? { ...mm, defaultPrice: newPrice } 
+                  : mm
+              ));
+            } else {
+              setMasterMaterials(prev => [...prev, targetMaster]);
             }
             setPriceModal(null);
           };
@@ -1158,11 +1352,9 @@ export const CostCalculatorView = ({ setViewState }: { setViewState: (state: str
                     <button onClick={handleSaveLocal} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg shadow transition-colors flex items-center justify-center gap-2">
                       <Check className="w-5 h-5" /> الاستخدام هنا فقط
                     </button>
-                    {masterMat && (
-                      <button onClick={handleSaveMaster} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-lg shadow transition-colors flex items-center justify-center gap-2">
-                        <Save className="w-5 h-5" /> تعديل السعر المرجعي واعتماده هنا
-                      </button>
-                    )}
+                    <button onClick={handleSaveMaster} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-lg shadow transition-colors flex items-center justify-center gap-2">
+                      <Save className="w-5 h-5" /> {masterMat ? 'تعديل السعر المرجعي واعتماده هنا' : 'إضافة كصنف مرجعي جديد واعتماده هنا'}
+                    </button>
                     <button onClick={() => setPriceModal(null)} className="w-full bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-3.5 rounded-lg transition-colors mt-2">
                       إلغاء
                     </button>
@@ -1172,6 +1364,14 @@ export const CostCalculatorView = ({ setViewState }: { setViewState: (state: str
             </div>
           );
         })()}
+
+        <AttachmentsGalleryModal
+          isOpen={isGalleryOpen}
+          onClose={() => setIsGalleryOpen(false)}
+          images={attachments}
+          initialIndex={galleryIndex}
+          title={editingEstimate?.desc ? `مرفقات: ${editingEstimate.desc}` : 'معاينة المرفقات'}
+        />
       </div>
     );
   };

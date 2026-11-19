@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { LogIn, AlertCircle } from 'lucide-react';
+import { LogIn, AlertCircle, Clock } from 'lucide-react';
 import shamsLogo from '../../assets/shamsLogo.png';
 
 export const LoginView = () => {
-  const { login } = useAuth();
+  const { login, sessionExpiredNotice } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -27,12 +27,18 @@ export const LoginView = () => {
         {/* Logo */}
         <div className="text-center mb-8">
           <img src={shamsLogo} alt="شمس" className="w-20 h-20 mx-auto mb-4 rounded-2xl shadow-lg" />
-          <h1 className="text-2xl font-black text-white">شمس للمقطورات</h1>
+          <h1 className="text-2xl font-black text-white">شمس للأعمال المعدنية</h1>
           <p className="text-slate-400 text-sm mt-1">سجّل دخولك للمتابعة</p>
         </div>
 
         {/* Card */}
         <div className="bg-white rounded-2xl shadow-2xl p-8">
+          {sessionExpiredNotice && (
+            <div className="mb-5 flex items-start gap-2.5 text-amber-800 bg-amber-50 border border-amber-300 rounded-xl p-3.5 text-sm font-bold shadow-sm">
+              <Clock className="w-5 h-5 flex-shrink-0 text-amber-600 mt-0.5" />
+              <div className="flex-1 leading-relaxed">{sessionExpiredNotice}</div>
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-1.5">اسم المستخدم</label>

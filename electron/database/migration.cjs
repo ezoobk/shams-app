@@ -117,9 +117,24 @@ async function runMigrationIfNeeded(db, jsonPath) {
 
       // 11. Letters
       if (dbData.shams_letters) {
-        const stmt = await db.prepare('INSERT INTO letters (id, date, to_name, subject, blocks, isArchived) VALUES (?, ?, ?, ?, ?, ?)');
+        const stmt = await db.prepare('INSERT INTO letters (id, date, to_name, subject, blocks, isArchived, customerId, senderUserId, senderName, senderTitle, senderSignature, senderStamp, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
         for (const l of dbData.shams_letters) {
-          await stmt.run(l.id, l.date, l.to, l.subject, JSON.stringify(l.blocks || []), l.isArchived ? 1 : 0);
+          const toName = l.to || l.customerName || l.to_name || null;
+          await stmt.run(
+            l.id, 
+            l.date, 
+            toName, 
+            l.subject || '', 
+            JSON.stringify(l.blocks || []), 
+            l.isArchived ? 1 : 0,
+            l.customerId || null,
+            l.senderUserId || null,
+            l.senderName || null,
+            l.senderTitle || null,
+            l.senderSignature || null,
+            l.senderStamp || null,
+            JSON.stringify(l)
+          );
         }
         await stmt.finalize();
       }

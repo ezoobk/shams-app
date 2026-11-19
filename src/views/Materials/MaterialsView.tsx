@@ -2,10 +2,10 @@ import { useLocalStorage } from '../../hooks/useLocalStorage';
 import React, { useState } from 'react'; 
 import { useAuth } from '../../context/AuthContext';
 import { useMaterials } from '../../context/MaterialsContext';
-import { Package, Plus, List, Grid, Trash2, Edit, Save, X, Search, ArrowUp, ArrowDown, Tags, Settings, Check } from 'lucide-react';
+import { Package, Plus, List, Grid, Trash2, Edit, Save, X, Search, ArrowUp, ArrowDown, Tags, Settings, Check, FileText, FileCheck } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatters';
 
-export const MaterialsView = () => {
+export const MaterialsView = ({ setActiveTab, setViewState, setEditingInvoice }: any) => {
     const { masterMaterials, setMasterMaterials, worksOf } = useMaterials();
     const { hasPermission } = useAuth();
   const [viewMode, setViewMode] = useLocalStorage('materials_viewMode', 'table');
@@ -45,6 +45,7 @@ export const MaterialsView = () => {
     }, [masterMaterials, sortConfig]);
 
     const toggleTag = (matId, workId) => {
+      if (!hasPermission('materials', 'edit')) return alert('ليس لديك صلاحية لتعديل تصنيفات المواد.');
       setMasterMaterials(masterMaterials.map(m => {
         if (m.id === matId) {
           const currentTags = m.worksOfIds || [];
@@ -116,9 +117,18 @@ export const MaterialsView = () => {
                         </div>
                       ) : (
                         <div className="flex gap-2 justify-center">
-                          <button onClick={() => setTaggingId(taggingId === mm.id ? null : mm.id)} className={`p-2 rounded ${taggingId === mm.id ? 'bg-purple-600 text-white' : 'text-purple-600 bg-purple-50 hover:bg-purple-100'}`} title="ربط بأقسام العمل وتصنيف المادة"><Package className="w-4 h-4" /></button>
-                          <button onClick={() => { setEditingId(mm.id); setEditForm({ name: mm.name, shortName: mm.shortName || '', price: mm.defaultPrice, unit: mm.unit || '' }); }} className="text-blue-600 bg-blue-50 p-2 rounded hover:bg-blue-100" title="تعديل المادة"><Edit className="w-4 h-4" /></button>
-                          <button onClick={() => { if (window.confirm('هل أنت متأكد من حذف هذه المادة؟')) setMasterMaterials(masterMaterials.filter(m => m.id !== mm.id)); }} className="text-red-500 bg-red-50 p-2 rounded hover:bg-red-100" title="حذف المادة"><Trash2 className="w-4 h-4" /></button>
+                          {hasPermission('materials', 'edit') && (
+                            <>
+                              <button onClick={() => setTaggingId(taggingId === mm.id ? null : mm.id)} className={`p-2 rounded ${taggingId === mm.id ? 'bg-purple-600 text-white' : 'text-purple-600 bg-purple-50 hover:bg-purple-100'}`} title="ربط بأقسام العمل وتصنيف المادة"><Package className="w-4 h-4" /></button>
+                              <button onClick={() => { setEditingId(mm.id); setEditForm({ name: mm.name, shortName: mm.shortName || '', price: mm.defaultPrice, unit: mm.unit || '' }); }} className="text-blue-600 bg-blue-50 p-2 rounded hover:bg-blue-100" title="تعديل المادة"><Edit className="w-4 h-4" /></button>
+                            </>
+                          )}
+                          {hasPermission('materials', 'delete') && (
+                            <button onClick={() => { if (window.confirm('هل أنت متأكد من حذف هذه المادة؟')) setMasterMaterials(masterMaterials.filter(m => m.id !== mm.id)); }} className="text-red-500 bg-red-50 p-2 rounded hover:bg-red-100" title="حذف المادة"><Trash2 className="w-4 h-4" /></button>
+                          )}
+                          {!hasPermission('materials', 'edit') && !hasPermission('materials', 'delete') && (
+                            <span className="text-xs text-slate-400 font-medium">عرض فقط</span>
+                          )}
                         </div>
                       )}
                     </td>
@@ -188,9 +198,18 @@ export const MaterialsView = () => {
                     </div>
                   </div>
                   <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 mt-auto">
-                    <button onClick={() => setTaggingId(taggingId === mm.id ? null : mm.id)} className={`p-2 rounded flex-1 flex justify-center items-center gap-1 font-bold text-xs ${taggingId === mm.id ? 'bg-purple-600 text-white' : 'text-purple-600 bg-purple-50 hover:bg-purple-100'}`} title="ربط بأقسام العمل"><Package className="w-4 h-4" /> ربط</button>
-                    <button onClick={() => { setEditingId(mm.id); setEditForm({ name: mm.name, shortName: mm.shortName || '', price: mm.defaultPrice, unit: mm.unit || '' }); }} className="text-blue-600 bg-blue-50 p-2 rounded hover:bg-blue-100" title="تعديل المادة"><Edit className="w-4 h-4" /></button>
-                    <button onClick={() => { if (window.confirm('هل أنت متأكد من حذف هذه المادة؟')) setMasterMaterials(masterMaterials.filter(m => m.id !== mm.id)); }} className="text-red-500 bg-red-50 p-2 rounded hover:bg-red-100" title="حذف المادة"><Trash2 className="w-4 h-4" /></button>
+                    {hasPermission('materials', 'edit') && (
+                      <>
+                        <button onClick={() => setTaggingId(taggingId === mm.id ? null : mm.id)} className={`p-2 rounded flex-1 flex justify-center items-center gap-1 font-bold text-xs ${taggingId === mm.id ? 'bg-purple-600 text-white' : 'text-purple-600 bg-purple-50 hover:bg-purple-100'}`} title="ربط بأقسام العمل"><Package className="w-4 h-4" /> ربط</button>
+                        <button onClick={() => { setEditingId(mm.id); setEditForm({ name: mm.name, shortName: mm.shortName || '', price: mm.defaultPrice, unit: mm.unit || '' }); }} className="text-blue-600 bg-blue-50 p-2 rounded hover:bg-blue-100" title="تعديل المادة"><Edit className="w-4 h-4" /></button>
+                      </>
+                    )}
+                    {hasPermission('materials', 'delete') && (
+                      <button onClick={() => { if (window.confirm('هل أنت متأكد من حذف هذه المادة؟')) setMasterMaterials(masterMaterials.filter(m => m.id !== mm.id)); }} className="text-red-500 bg-red-50 p-2 rounded hover:bg-red-100" title="حذف المادة"><Trash2 className="w-4 h-4" /></button>
+                    )}
+                    {!hasPermission('materials', 'edit') && !hasPermission('materials', 'delete') && (
+                      <span className="text-xs text-slate-400 font-medium py-1">عرض فقط</span>
+                    )}
                   </div>
                 </>
               )}
@@ -219,6 +238,27 @@ export const MaterialsView = () => {
       );
     };
 
+    const handleCreateMaterialInvoice = (type: 'مبدئية' | 'نهائية') => {
+      if (!hasPermission('invoices', 'create')) {
+        return alert('ليس لديك صلاحية لإنشاء فواتير صادرة');
+      }
+      const newInvoice = {
+        isDraft: true,
+        type,
+        isMaterialsInvoice: true,
+        sourceTab: 'materials',
+        customerName: '',
+        items: [],
+        total: 0,
+        discount: 0,
+        netTotal: 0,
+        notes: '',
+        terms: ''
+      };
+      if (setEditingInvoice) setEditingInvoice(newInvoice);
+      if (setViewState) setViewState('edit_invoice');
+    };
+
     const categoriesToRender = [
       ...worksOf.map(w => ({ id: w.id, name: w.name, materials: sortedAndFilteredMaterials.filter(m => m.worksOfIds?.includes(w.id)) })),
       { id: 'uncategorized', name: 'مواد غير مصنفة', materials: sortedAndFilteredMaterials.filter(m => !m.worksOfIds || m.worksOfIds.length === 0) }
@@ -226,12 +266,36 @@ export const MaterialsView = () => {
     return (
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm max-w-5xl mx-auto">
         <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-          <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Settings className="w-6 h-6 text-slate-500" /> إدارة المواد الخام</h2>
-          <div className="flex bg-slate-100 p-1 rounded-lg">
-            <button onClick={() => setViewMode('table')} className={`p-1.5 rounded-md transition-colors ${viewMode === 'table' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`} title="عرض كجدول عرض كجدول"><List className="w-4 h-4" /></button>
-            <button onClick={() => setViewMode('grid')} className={`p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`} title="عرض كبطاقات عرض كبطاقات"><Grid className="w-4 h-4" /></button>
+          <div className="flex items-center gap-3">
+            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Settings className="w-6 h-6 text-slate-500" /> إدارة المواد الخام</h2>
+            <div className="flex bg-slate-100 p-1 rounded-lg">
+              <button onClick={() => setViewMode('table')} className={`p-1.5 rounded-md transition-colors ${viewMode === 'table' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`} title="عرض كجدول"><List className="w-4 h-4" /></button>
+              <button onClick={() => setViewMode('grid')} className={`p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`} title="عرض كبطاقات"><Grid className="w-4 h-4" /></button>
+            </div>
           </div>
-          
+
+          <div className="flex items-center gap-2.5 flex-wrap">
+            {hasPermission('invoices', 'create') && (
+              <>
+                <button
+                  onClick={() => handleCreateMaterialInvoice('مبدئية')}
+                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm transition-all hover:shadow active:scale-95"
+                  title="إنشاء فاتورة مبدئية لبيع مواد"
+                >
+                  <FileText className="w-4 h-4 text-indigo-600" />
+                  <span>فاتورة مبدئية لبيع مواد</span>
+                </button>
+                <button
+                  onClick={() => handleCreateMaterialInvoice('نهائية')}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm transition-all hover:shadow active:scale-95"
+                  title="إنشاء فاتورة نهائية لبيع مواد"
+                >
+                  <FileCheck className="w-4 h-4 text-emerald-100" />
+                  <span>فاتورة نهائية لبيع مواد</span>
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
 

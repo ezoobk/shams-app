@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getObject, setObject } from '../api/client';
+import { getObject, setObject, type ApiResult } from '../api/client';
 
 export function useDatabaseObject<T>(
   keyName: string,
   initialValue: T
-): [T, (value: T | ((val: T) => T)) => void, boolean] {
+): [T, (value: T | ((val: T) => T)) => Promise<ApiResult>, boolean] {
 
   const [data, setData] = useState<T>(initialValue);
   const [isLoading, setIsLoading] = useState(true);
@@ -52,8 +52,8 @@ export function useDatabaseObject<T>(
     };
   }, [keyName]);
 
-  // ── Update ──────────────────────────────────────────────────────────────────
-  const updateData = useCallback((newData: T | ((val: T) => T)) => {
+  // ── Update with Automatic Rollback on Failure ──────────────────────────────
+  const updateData = useCallback(async (newData: T | ((val: T) => T)): Promise<ApiResult> => {
     const currentData = dataRef.current;
     const nextState = typeof newData === 'function' ? (newData as (v: T) => T)(currentData) : newData;
 
@@ -61,11 +61,27 @@ export function useDatabaseObject<T>(
     setData(nextState);
     dataRef.current = nextState;
 
-    if (!isInitialized.current) return;
+    if (!isInitialized.current) return { success: true };
 
-    setObject(keyName, nextState).then(res => {
-      if (!res.success) console.error(`[useDatabaseObject] Save failed on "${keyName}":`, res.error);
-    });
+    try {
+      const res = await setObject(keyName, nextState);
+      if (!res.success) {
+        console.error(`[useDatabaseObject] Save failed on "${keyName}":`, res.error);
+        // Rollback
+        setData(currentData);
+        dataRef.current = currentData;
+
+        window.dispatchEvent(new CustomEvent('shams-sync-failed', {
+          detail: { table: keyName, error: res.error || 'فشل حفظ الكائن' }
+        }));
+        return res;
+      }
+      return { success: true };
+    } catch (err: any) {
+      setData(currentData);
+      dataRef.current = currentData;
+      return { success: false, error: err.message || 'خطأ في الاتصال' };
+    }
   }, [keyName]);
 
   return [data, updateData, isLoading];

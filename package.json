@@ -1,7 +1,7 @@
 {
   "name": "shams-app",
   "private": true,
-  "version": "0.0.23",
+  "version": "0.0.41",
   "author": "Shams App",
   "description": "Shams App",
   "type": "module",
@@ -40,8 +40,12 @@
     "smart-build": "node scripts/build.cjs"
   },
   "dependencies": {
+    "compression": "^1.8.2",
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "html-to-image": "^1.11.13",
+    "html2canvas-pro": "^2.5.0",
+    "jspdf": "^4.2.1",
     "lucide-react": "^1.30.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

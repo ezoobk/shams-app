@@ -19,6 +19,7 @@ export const WorksOfView = ({ selectedWorkId, setSelectedWorkId }) => {
       if (!hasPermission('worksOf', 'create')) return alert('ليس لديك صلاحية لإضافة عنصر'); if (!itemName || !selectedWorkId) return; setMasterItems([...masterItems, { id: `I${Date.now()}`, worksOfId: selectedWorkId, name: itemName, orderIndex: masterItems.length }]); setItemName(''); };
 
     const moveWorkUp = (idx) => {
+      if (!hasPermission('worksOf', 'edit')) return;
       if (idx === 0) return;
       const newWorks = [...worksOf];
       [newWorks[idx - 1], newWorks[idx]] = [newWorks[idx], newWorks[idx - 1]];
@@ -26,6 +27,7 @@ export const WorksOfView = ({ selectedWorkId, setSelectedWorkId }) => {
     };
 
     const moveWorkDown = (idx) => {
+      if (!hasPermission('worksOf', 'edit')) return;
       if (idx === worksOf.length - 1) return;
       const newWorks = [...worksOf];
       [newWorks[idx + 1], newWorks[idx]] = [newWorks[idx], newWorks[idx + 1]];
@@ -33,6 +35,7 @@ export const WorksOfView = ({ selectedWorkId, setSelectedWorkId }) => {
     };
 
     const saveWorkEdit = (id) => {
+      if (!hasPermission('worksOf', 'edit')) return alert('ليس لديك صلاحية للتعديل');
       if (!editWorkName) return;
       setWorksOf(worksOf.map(w => w.id === id ? { ...w, name: editWorkName } : w));
       setEditingWorkId(null);
@@ -41,6 +44,7 @@ export const WorksOfView = ({ selectedWorkId, setSelectedWorkId }) => {
     const sectionItems = masterItems.filter(i => i.worksOfId === selectedWorkId);
 
     const moveItemUp = (idx) => {
+      if (!hasPermission('worksOf', 'edit')) return;
       if (idx === 0) return;
       const itemsWithoutSection = masterItems.filter(i => i.worksOfId !== selectedWorkId);
       const newSectionItems = [...sectionItems];
@@ -49,6 +53,7 @@ export const WorksOfView = ({ selectedWorkId, setSelectedWorkId }) => {
     };
 
     const moveItemDown = (idx) => {
+      if (!hasPermission('worksOf', 'edit')) return;
       if (idx === sectionItems.length - 1) return;
       const itemsWithoutSection = masterItems.filter(i => i.worksOfId !== selectedWorkId);
       const newSectionItems = [...sectionItems];
@@ -57,6 +62,7 @@ export const WorksOfView = ({ selectedWorkId, setSelectedWorkId }) => {
     };
 
     const saveItemEdit = (id) => {
+      if (!hasPermission('worksOf', 'edit')) return alert('ليس لديك صلاحية للتعديل');
       if (!editItemName) return;
       setMasterItems(masterItems.map(i => i.id === id ? { ...i, name: editItemName } : i));
       setEditingItemId(null);
@@ -94,11 +100,28 @@ export const WorksOfView = ({ selectedWorkId, setSelectedWorkId }) => {
                           <button onClick={(e) => { e.stopPropagation(); setEditingWorkId(null); }} className="bg-slate-100 text-slate-600 p-1.5 rounded hover:bg-slate-200"><X className="w-4 h-4" /></button>
                         </div>
                       ) : (
-                        <div className="flex gap-1 justify-center">
-                          <button onClick={(e) => { e.stopPropagation(); moveWorkUp(idx); }} disabled={idx === 0} className={`p-1.5 rounded ${idx === 0 ? 'text-slate-300' : 'text-slate-500 hover:bg-slate-200'}`}><ArrowUp className="w-4 h-4" /></button>
-                          <button onClick={(e) => { e.stopPropagation(); moveWorkDown(idx); }} disabled={idx === worksOf.length - 1} className={`p-1.5 rounded ${idx === worksOf.length - 1 ? 'text-slate-300' : 'text-slate-500 hover:bg-slate-200'}`}><ArrowDown className="w-4 h-4" /></button>
-                          <button onClick={(e) => { e.stopPropagation(); setEditWorkName(w.name); setEditingWorkId(w.id); }} className="text-blue-500 hover:bg-blue-50 p-1.5 rounded"><Edit className="w-4 h-4" /></button>
-                          <button onClick={(e) => { e.stopPropagation(); if (window.confirm('هل أنت متأكد من الحذف؟')) { setWorksOf(worksOf.filter(x => x.id !== w.id)); setMasterItems(masterItems.filter(i => i.worksOfId !== w.id)); if (selectedWorkId === w.id) setSelectedWorkId(null); } }} className="text-red-500 hover:bg-red-50 p-1.5 rounded"><Trash2 className="w-4 h-4" /></button>
+                        <div className="flex gap-1 justify-center items-center">
+                          {hasPermission('worksOf', 'edit') && (
+                            <>
+                              <button onClick={(e) => { e.stopPropagation(); moveWorkUp(idx); }} disabled={idx === 0} className={`p-1.5 rounded ${idx === 0 ? 'text-slate-300' : 'text-slate-500 hover:bg-slate-200'}`} title="تحريك لأعلى"><ArrowUp className="w-4 h-4" /></button>
+                              <button onClick={(e) => { e.stopPropagation(); moveWorkDown(idx); }} disabled={idx === worksOf.length - 1} className={`p-1.5 rounded ${idx === worksOf.length - 1 ? 'text-slate-300' : 'text-slate-500 hover:bg-slate-200'}`} title="تحريك لأسفل"><ArrowDown className="w-4 h-4" /></button>
+                              <button onClick={(e) => { e.stopPropagation(); setEditWorkName(w.name); setEditingWorkId(w.id); }} className="text-blue-500 hover:bg-blue-50 p-1.5 rounded" title="تعديل"><Edit className="w-4 h-4" /></button>
+                            </>
+                          )}
+                          {hasPermission('worksOf', 'delete') && (
+                            <button onClick={(e) => { 
+                              e.stopPropagation(); 
+                              if (!hasPermission('worksOf', 'delete')) return alert('ليس لديك صلاحية للحذف');
+                              if (window.confirm('هل أنت متأكد من الحذف؟')) { 
+                                setWorksOf(worksOf.filter(x => x.id !== w.id)); 
+                                setMasterItems(masterItems.filter(i => i.worksOfId !== w.id)); 
+                                if (selectedWorkId === w.id) setSelectedWorkId(null); 
+                              } 
+                            }} className="text-red-500 hover:bg-red-50 p-1.5 rounded" title="حذف"><Trash2 className="w-4 h-4" /></button>
+                          )}
+                          {!hasPermission('worksOf', 'edit') && !hasPermission('worksOf', 'delete') && (
+                            <span className="text-xs text-slate-400">عرض فقط</span>
+                          )}
                         </div>
                       )}
                     </td>
@@ -141,11 +164,23 @@ export const WorksOfView = ({ selectedWorkId, setSelectedWorkId }) => {
                             <button onClick={() => setEditingItemId(null)} className="bg-slate-100 text-slate-600 p-1.5 rounded hover:bg-slate-200"><X className="w-4 h-4" /></button>
                           </div>
                         ) : (
-                          <div className="flex gap-1 justify-center">
-                            <button onClick={() => moveItemUp(idx)} disabled={idx === 0} className={`p-1.5 rounded ${idx === 0 ? 'text-slate-300' : 'text-slate-500 hover:bg-slate-200'}`}><ArrowUp className="w-4 h-4" /></button>
-                            <button onClick={() => moveItemDown(idx)} disabled={idx === sectionItems.length - 1} className={`p-1.5 rounded ${idx === sectionItems.length - 1 ? 'text-slate-300' : 'text-slate-500 hover:bg-slate-200'}`}><ArrowDown className="w-4 h-4" /></button>
-                            <button onClick={() => { setEditItemName(item.name); setEditingItemId(item.id); }} className="text-blue-500 hover:bg-blue-50 p-1.5 rounded"><Edit className="w-4 h-4" /></button>
-                            <button onClick={() => { if (window.confirm('هل أنت متأكد من الحذف؟')) setMasterItems(masterItems.filter(x => x.id !== item.id)); }} className="text-red-500 hover:bg-red-50 p-1.5 rounded"><Trash2 className="w-4 h-4" /></button>
+                          <div className="flex gap-1 justify-center items-center">
+                            {hasPermission('worksOf', 'edit') && (
+                              <>
+                                <button onClick={() => moveItemUp(idx)} disabled={idx === 0} className={`p-1.5 rounded ${idx === 0 ? 'text-slate-300' : 'text-slate-500 hover:bg-slate-200'}`} title="تحريك لأعلى"><ArrowUp className="w-4 h-4" /></button>
+                                <button onClick={() => moveItemDown(idx)} disabled={idx === sectionItems.length - 1} className={`p-1.5 rounded ${idx === sectionItems.length - 1 ? 'text-slate-300' : 'text-slate-500 hover:bg-slate-200'}`} title="تحريك لأسفل"><ArrowDown className="w-4 h-4" /></button>
+                                <button onClick={() => { setEditItemName(item.name); setEditingItemId(item.id); }} className="text-blue-500 hover:bg-blue-50 p-1.5 rounded" title="تعديل"><Edit className="w-4 h-4" /></button>
+                              </>
+                            )}
+                            {hasPermission('worksOf', 'delete') && (
+                              <button onClick={() => { 
+                                if (!hasPermission('worksOf', 'delete')) return alert('ليس لديك صلاحية للحذف');
+                                if (window.confirm('هل أنت متأكد من الحذف؟')) setMasterItems(masterItems.filter(x => x.id !== item.id)); 
+                              }} className="text-red-500 hover:bg-red-50 p-1.5 rounded" title="حذف"><Trash2 className="w-4 h-4" /></button>
+                            )}
+                            {!hasPermission('worksOf', 'edit') && !hasPermission('worksOf', 'delete') && (
+                              <span className="text-xs text-slate-400">عرض فقط</span>
+                            )}
                           </div>
                         )}
                       </td>

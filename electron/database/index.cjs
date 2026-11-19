@@ -7,17 +7,21 @@ const { initializeSchema } = require('./schema.cjs');
 const { runMigrationIfNeeded } = require('./migration.cjs');
 
 let db = null;
+let currentDbFolder = null;
+let currentDbPath = null;
 let migrationDidRun = false;
 
 // Global event emitter to notify HTTP and IPC clients of changes
 const dbEvents = new EventEmitter();
 
 async function initDatabase(folderPath) {
+  currentDbFolder = folderPath;
   if (!fs.existsSync(folderPath)) {
     fs.mkdirSync(folderPath, { recursive: true });
   }
 
   const dbPath = path.join(folderPath, 'ShamsDatabase.sqlite');
+  currentDbPath = dbPath;
   const jsonPath = path.join(folderPath, 'ShamsAppData.json');
   
   // Create or open DB asynchronously
@@ -40,8 +44,44 @@ function getDb() {
   return db;
 }
 
+function getDbFolder() {
+  return currentDbFolder;
+}
+
+function getDbPath() {
+  return currentDbPath;
+}
+
+async function closeDatabase() {
+  if (db) {
+    try {
+      await db.close();
+    } catch (e) {
+      console.warn('Error closing database:', e.message);
+    }
+    db = null;
+  }
+}
+
+async function reopenDatabase(folderPath) {
+  const targetFolder = folderPath || currentDbFolder;
+  await closeDatabase();
+  const newDb = await initDatabase(targetFolder);
+  dbEvents.emit('change', '*');
+  return newDb;
+}
+
 function getMigrationStatus() {
   return migrationDidRun;
 }
 
-module.exports = { initDatabase, getDb, getMigrationStatus, dbEvents };
+module.exports = { 
+  initDatabase, 
+  getDb, 
+  getDbFolder, 
+  getDbPath, 
+  closeDatabase, 
+  reopenDatabase, 
+  getMigrationStatus, 
+  dbEvents 
+};

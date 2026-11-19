@@ -25,7 +25,7 @@ export const CustomerSelect = ({ value, onChange, direction = 'down' }: { value:
     };
   }, [isOpen]);
 
-  const selectedCustomer = customers.find(c => c.id === value);
+  const selectedCustomer = customers.find(c => c.id === value || (value && c.name?.trim().toLowerCase() === value.trim().toLowerCase()));
   const filteredCustomers = customers.filter(c => c.name.toLowerCase().includes(search.toLowerCase()) || (c.phone && c.phone.includes(search)));
 
   const handleQuickCreate = () => {
@@ -42,8 +42,8 @@ export const CustomerSelect = ({ value, onChange, direction = 'down' }: { value:
         className="p-2.5 border border-slate-300 rounded-lg text-sm bg-slate-50 cursor-pointer flex justify-between items-center"
         onClick={() => setIsOpen(!isOpen)}
       >
-        <span className={selectedCustomer ? "text-slate-800 font-bold" : "text-slate-500"}>
-          {selectedCustomer ? selectedCustomer.name : '-- اختر الزبون أو اكتب لإضافة جديد --'}
+        <span className={(selectedCustomer || value) ? "text-slate-800 font-bold" : "text-slate-500"}>
+          {selectedCustomer ? selectedCustomer.name : (value || '-- اختر الزبون أو اكتب لإضافة جديد --')}
         </span>
         <ChevronDown className="w-4 h-4 text-slate-500" />
       </div>

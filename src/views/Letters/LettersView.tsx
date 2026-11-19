@@ -8,7 +8,8 @@ import { useLetters } from '../../context/LettersContext';
 import { useSettings } from '../../context/SettingsContext';
 import { usePrint } from '../../context/PrintContext';
 import { useCustomers } from '../../context/CustomersContext';
-import { FileText, Plus, Search, Check, Trash2, Printer, Calendar, List, Grid, X, Eye, ArrowUp, ArrowDown, Edit, MoveUp, MoveDown, ChevronsUpDown, ChevronUp, ChevronDown, Save, Download, Database } from 'lucide-react';
+import { FileText, Plus, Search, Check, Trash2, Printer, Calendar, List, Grid, X, Eye, ArrowUp, ArrowDown, Edit, MoveUp, MoveDown, ChevronsUpDown, ChevronUp, ChevronDown, Save, Download, Database, Loader2, UserCheck, ShieldCheck, Image as ImageIcon } from 'lucide-react';
+import { bulkUpsert } from '../../api/client';
 
 import { formatCurrency, numberToArabicWords } from '../../utils/formatters';
 import { CustomerSelect } from '../../components/ui/CustomerSelect';
@@ -16,25 +17,92 @@ import { ExportFilterModal } from '../../components/ui/ExportFilterModal';
 import type { ExportFilters } from '../../components/ui/ExportFilterModal';
 
 export const LettersView = ({ searchTerm = '' }: any) => { 
-  const { hasPermission } = useAuth();
+  const { hasPermission, currentUser, users } = useAuth();
     const { letters, setLetters } = useLetters();
-    const { appSettings, setAppSettings, idCountersRef, generateId } = useSettings();
+    const { appSettings, setAppSettings, idCountersRef, generateId, generateIdAsync } = useSettings();
     const { printData, setPrintData } = usePrint();
     const { customers, setCustomers } = useCustomers();
     const [isCreating, setIsCreating] = useLocalStorage('shams_letters_create', false);
-    const [letterForm, setLetterForm] = useState({ 
-      subject: '', customerId: '', senderName: '', senderTitle: '', 
-      blocks: []
+    const [isSaving, setIsSaving] = useState(false);
+
+    const getDefaultLetterForm = () => ({ 
+      subject: '', 
+      customerId: '', 
+      customerName: '',
+      senderUserId: currentUser?.id || '',
+      senderName: currentUser?.displayName || currentUser?.username || '', 
+      senderTitle: currentUser?.jobTitle || 'المدير العام', 
+      senderSignature: currentUser?.signature || '',
+      senderStamp: currentUser?.stamp || '',
+      blocks: [] as any[]
     });
-    const [editingLetterId, setEditingLetterId] = useState(null);
+
+    const [letterForm, setLetterForm] = useState(getDefaultLetterForm);
+    const [editingLetterId, setEditingLetterId] = useState<string | null>(null);
     const [showAddMenu, setShowAddMenu] = useState(false);
+
+    // Auto-fill sender when currentUser becomes available if fields are blank
+    useEffect(() => {
+      if (currentUser && !editingLetterId && !letterForm.senderName) {
+        setLetterForm(prev => ({
+          ...prev,
+          senderUserId: prev.senderUserId || currentUser.id,
+          senderName: prev.senderName || currentUser.displayName || currentUser.username,
+          senderTitle: prev.senderTitle || currentUser.jobTitle || 'المدير العام',
+          senderSignature: prev.senderSignature || currentUser.signature || '',
+          senderStamp: prev.senderStamp || currentUser.stamp || ''
+        }));
+      }
+    }, [currentUser, editingLetterId]);
+
+    const resetLetterForm = () => {
+      setLetterForm(getDefaultLetterForm());
+      setEditingLetterId(null);
+      setIsCreating(false);
+    };
     
-    const handleEditLetter = (letter) => {
+    const handleEditLetter = (letter: any) => {
+      if (!hasPermission('invoices', 'edit')) return alert('ليس لديك صلاحية لتعديل الرسائل والمخاطبات.');
+      
+      const matchingUser = users?.find((u: any) => 
+        (letter.senderUserId && u.id === letter.senderUserId) || 
+        (letter.senderName && (u.displayName === letter.senderName || u.username === letter.senderName))
+      );
+
+      // Resolve destination / customer (التوجيه)
+      const targetName = (letter.customerName || letter.to || letter.to_name || letter.destination || '').trim();
+      let targetCustId = letter.customerId || '';
+      
+      const matchedCust = customers?.find((c: any) => 
+        (targetCustId && c.id === targetCustId) || 
+        (targetName && c.name?.trim().toLowerCase() === targetName.toLowerCase())
+      );
+
+      if (matchedCust) {
+        targetCustId = matchedCust.id;
+      } else if (targetName) {
+        // Ensure customer exists in customers list so CustomerSelect displays it and binds to it
+        targetCustId = targetCustId || `C${Date.now()}`;
+        const newCust = { id: targetCustId, name: targetName, phone: '', notes: '' };
+        setCustomers((prev: any) => [newCust, ...(prev || [])]);
+      }
+
+      // Sender resolution (المرسل)
+      const finalSenderName = letter.senderName || matchingUser?.displayName || matchingUser?.username || currentUser?.displayName || currentUser?.username || '';
+      const finalSenderTitle = letter.senderTitle || matchingUser?.jobTitle || currentUser?.jobTitle || 'المدير العام';
+      const finalSenderSignature = letter.senderSignature || matchingUser?.signature || currentUser?.signature || '';
+      const finalSenderStamp = letter.senderStamp || matchingUser?.stamp || currentUser?.stamp || '';
+      const finalSenderUserId = letter.senderUserId || matchingUser?.id || (finalSenderName === (currentUser?.displayName || currentUser?.username) ? currentUser?.id : '') || '';
+
       setLetterForm({
         subject: letter.subject || '',
-        customerId: letter.customerId || '',
-        senderName: letter.senderName || '',
-        senderTitle: letter.senderTitle || '',
+        customerId: targetCustId,
+        customerName: targetName || matchedCust?.name || '',
+        senderUserId: finalSenderUserId,
+        senderName: finalSenderName,
+        senderTitle: finalSenderTitle,
+        senderSignature: finalSenderSignature,
+        senderStamp: finalSenderStamp,
         blocks: letter.blocks ? JSON.parse(JSON.stringify(letter.blocks)) : []
       });
       setEditingLetterId(letter.id);
@@ -141,103 +209,235 @@ export const LettersView = ({ searchTerm = '' }: any) => {
       setLetterForm({...letterForm, blocks: newBlocks});
     };
 
-    const handleSave = () => { 
-    if (!hasPermission('invoices', 'create') && !hasPermission('invoices', 'edit')) return alert('ليس لديك صلاحية');
-      if (!letterForm.subject || !letterForm.customerId) return alert('الرجاء إدخال الموضوع والزبون.');
-      const cust = customers.find(c => c.id === letterForm.customerId);
-      
-      let savedLetter;
-      
+    const handleSave = async () => { 
       if (editingLetterId) {
-        savedLetter = letters.find(l => l.id === editingLetterId);
-        if (savedLetter) {
-          savedLetter = {
-            ...savedLetter,
-            ...letterForm,
-            customerName: cust ? cust.name : 'بدون اسم',
-            lastUpdated: new Date().toISOString()
-          };
-          setLetters(letters.map(l => l.id === editingLetterId ? savedLetter : l));
-        }
+        if (!hasPermission('invoices', 'edit')) return alert('ليس لديك صلاحية لتعديل الرسائل والمخاطبات.');
       } else {
-        savedLetter = {
-          id: generateId('letter', cust ? cust.name : 'بدون اسم', letterForm.subject),
-          date: new Date().toISOString(),
-          ...letterForm,
-          customerName: cust ? cust.name : 'بدون اسم'
-        };
-        setLetters([savedLetter, ...letters]);
+        if (!hasPermission('invoices', 'create')) return alert('ليس لديك صلاحية لإنشاء رسائل جديدة.');
+      }
+      if (!letterForm.subject || (!letterForm.customerId && !letterForm.customerName)) {
+        return alert('الرجاء إدخال الموضوع والزبون.');
+      }
+
+      let effectiveCustId = letterForm.customerId;
+      let effectiveCustName = letterForm.customerName;
+      
+      const cust = customers.find(c => c.id === effectiveCustId);
+      if (cust) {
+        effectiveCustName = cust.name;
+      } else if (!effectiveCustId && effectiveCustName) {
+        const byName = customers.find(c => c.name?.trim().toLowerCase() === effectiveCustName.trim().toLowerCase());
+        if (byName) {
+          effectiveCustId = byName.id;
+        } else {
+          effectiveCustId = `C${Date.now()}`;
+          const newCust = { id: effectiveCustId, name: effectiveCustName, phone: '', notes: '' };
+          setCustomers(prev => [newCust, ...(prev || [])]);
+        }
+      } else if (effectiveCustId && !effectiveCustName) {
+        effectiveCustName = cust ? cust.name : 'بدون اسم';
       }
       
-      setLetterForm({ 
-        subject: '', customerId: '', senderName: '', senderTitle: '', 
-        blocks: []
-      });
-      setEditingLetterId(null);
-      setIsCreating(false);
-      if (savedLetter) setPrintData({ type: 'LETTER', data: savedLetter });
+      setIsSaving(true);
+      try {
+        let savedLetter: any;
+        if (editingLetterId) {
+          const prevLetter = letters.find(l => l.id === editingLetterId) || {};
+          savedLetter = {
+            ...prevLetter,
+            ...letterForm,
+            id: editingLetterId,
+            customerId: effectiveCustId,
+            customerName: effectiveCustName || 'بدون اسم',
+            to: effectiveCustName || 'بدون اسم',
+            to_name: effectiveCustName || 'بدون اسم',
+            destination: effectiveCustName || 'بدون اسم',
+            lastUpdated: new Date().toISOString()
+          };
+          const saveRes = await bulkUpsert('letters', [savedLetter]);
+          if (!saveRes.success) {
+            alert('فشل حفظ التعديلات على الخادم الرئيسي: ' + (saveRes.error || 'خطأ في الاتصال'));
+            return;
+          }
+          setLetters(letters.map(l => l.id === editingLetterId ? savedLetter : l));
+        } else {
+          const letterId = await generateIdAsync('letter', effectiveCustName || 'بدون اسم', letterForm.subject);
+          savedLetter = {
+            id: letterId,
+            date: new Date().toISOString(),
+            ...letterForm,
+            customerId: effectiveCustId,
+            customerName: effectiveCustName || 'بدون اسم',
+            to: effectiveCustName || 'بدون اسم',
+            to_name: effectiveCustName || 'بدون اسم',
+            destination: effectiveCustName || 'بدون اسم'
+          };
+          const saveRes = await bulkUpsert('letters', [savedLetter]);
+          if (!saveRes.success) {
+            alert('فشل حفظ الرسالة على الخادم الرئيسي: ' + (saveRes.error || 'خطأ في الاتصال'));
+            return;
+          }
+          setLetters([savedLetter, ...letters]);
+        }
+        
+        resetLetterForm();
+        if (savedLetter) setPrintData({ type: 'LETTER', data: savedLetter });
+      } catch (err: any) {
+        console.error('Error saving letter:', err);
+        alert('خطأ أثناء حفظ الرسالة: ' + (err.message || 'تعذر الاتصال بالخادم الرئيسي'));
+      } finally {
+        setIsSaving(false);
+      }
     };
 
-    const handleSaveAsNew = () => {
-      if (!letterForm.subject || !letterForm.customerId) return alert('الرجاء إدخال الموضوع والزبون.');
-      const cust = customers.find(c => c.id === letterForm.customerId);
-      const newLetter = {
-        id: generateId('letter', cust ? cust.name : 'بدون اسم', letterForm.subject),
-        date: new Date().toISOString(),
-        ...letterForm,
-        customerName: cust ? cust.name : 'بدون اسم'
-      };
-      setLetters([newLetter, ...letters]);
-      setLetterForm({ 
-        subject: '', customerId: '', senderName: '', senderTitle: '', 
-        blocks: []
-      });
-      setEditingLetterId(null);
-      setIsCreating(false);
-      setPrintData({ type: 'LETTER', data: newLetter });
+    const handleSaveAsNew = async () => {
+      if (!hasPermission('invoices', 'create')) return alert('ليس لديك صلاحية لإنشاء وحفظ رسائل جديدة.');
+      if (!letterForm.subject || (!letterForm.customerId && !letterForm.customerName)) {
+        return alert('الرجاء إدخال الموضوع والزبون.');
+      }
+
+      let effectiveCustId = letterForm.customerId;
+      let effectiveCustName = letterForm.customerName;
+      
+      const cust = customers.find(c => c.id === effectiveCustId);
+      if (cust) {
+        effectiveCustName = cust.name;
+      } else if (!effectiveCustId && effectiveCustName) {
+        const byName = customers.find(c => c.name?.trim().toLowerCase() === effectiveCustName.trim().toLowerCase());
+        if (byName) {
+          effectiveCustId = byName.id;
+        } else {
+          effectiveCustId = `C${Date.now()}`;
+          const newCust = { id: effectiveCustId, name: effectiveCustName, phone: '', notes: '' };
+          setCustomers(prev => [newCust, ...(prev || [])]);
+        }
+      } else if (effectiveCustId && !effectiveCustName) {
+        effectiveCustName = cust ? cust.name : 'بدون اسم';
+      }
+
+      setIsSaving(true);
+      try {
+        const letterId = await generateIdAsync('letter', effectiveCustName || 'بدون اسم', letterForm.subject);
+        const newLetter = {
+          id: letterId,
+          date: new Date().toISOString(),
+          ...letterForm,
+          customerId: effectiveCustId,
+          customerName: effectiveCustName || 'بدون اسم',
+          to: effectiveCustName || 'بدون اسم',
+          to_name: effectiveCustName || 'بدون اسم',
+          destination: effectiveCustName || 'بدون اسم'
+        };
+        const saveRes = await bulkUpsert('letters', [newLetter]);
+        if (!saveRes.success) {
+          alert('فشل حفظ الرسالة على الخادم الرئيسي: ' + (saveRes.error || 'خطأ في الاتصال'));
+          return;
+        }
+        setLetters([newLetter, ...letters]);
+        resetLetterForm();
+        setPrintData({ type: 'LETTER', data: newLetter });
+      } catch (err: any) {
+        console.error('Error saving letter as new:', err);
+        alert('خطأ أثناء حفظ الرسالة: ' + (err.message || 'تعذر الاتصال بالخادم الرئيسي'));
+      } finally {
+        setIsSaving(false);
+      }
     };
 
-    const handleSaveLegacy = () => {
+    const handleSaveLegacy = async () => {
+      if (!hasPermission('invoices', 'create')) return alert('ليس لديك صلاحية لإدراج سجلات خارجية.');
       if ((!legacyAutoId && !legacyForm.id) || !legacyForm.customerName || !legacyForm.subject || !legacyForm.date) {
         return alert('الرجاء إدخال جميع الحقول المطلوبة.');
       }
       
-      const finalId = legacyAutoId 
-        ? generateId('letter', legacyForm.customerName, legacyForm.subject) 
-        : legacyForm.id;
-        
-      const newLetter = {
-        id: finalId,
-        date: new Date(legacyForm.date).toISOString(),
-        customerName: legacyForm.customerName,
-        subject: legacyForm.subject,
-        customerId: '',
-        senderName: '',
-        senderTitle: '',
-        blocks: []
-      };
-      setLetters([newLetter, ...letters]);
-      setLegacyForm({ id: '', date: new Date().toISOString().split('T')[0], customerName: '', subject: '' });
-      setShowLegacyImport(false);
-      setLegacyAutoId(true);
-      alert('تم إدراج السجل بنجاح.');
+      setIsSaving(true);
+      try {
+        let finalId = legacyForm.id;
+        if (legacyAutoId) {
+          finalId = await generateIdAsync('letter', legacyForm.customerName, legacyForm.subject);
+        }
+          
+        const targetName = legacyForm.customerName.trim();
+        const existingCust = customers.find(c => c.name?.trim().toLowerCase() === targetName.toLowerCase());
+        let custId = existingCust?.id;
+        if (!custId) {
+          custId = `C${Date.now()}`;
+          const newCust = { id: custId, name: targetName, phone: '', notes: '' };
+          setCustomers(prev => [newCust, ...(prev || [])]);
+        }
+
+        const newLetter = {
+          id: finalId,
+          date: new Date(legacyForm.date).toISOString(),
+          customerName: targetName,
+          to: targetName,
+          to_name: targetName,
+          destination: targetName,
+          subject: legacyForm.subject,
+          customerId: custId,
+          senderUserId: currentUser?.id || '',
+          senderName: currentUser?.displayName || currentUser?.username || '',
+          senderTitle: currentUser?.jobTitle || 'المدير العام',
+          senderSignature: currentUser?.signature || '',
+          senderStamp: currentUser?.stamp || '',
+          blocks: []
+        };
+        const saveRes = await bulkUpsert('letters', [newLetter]);
+        if (!saveRes.success) {
+          alert('فشل حفظ السجل الخارجي على الخادم الرئيسي: ' + (saveRes.error || 'خطأ في الاتصال'));
+          return;
+        }
+        setLetters([newLetter, ...letters]);
+        setLegacyForm({ id: '', date: new Date().toISOString().split('T')[0], customerName: '', subject: '' });
+        setShowLegacyImport(false);
+        setLegacyAutoId(true);
+        alert('تم إدراج السجل بنجاح.');
+      } catch (err: any) {
+        console.error('Error saving legacy letter:', err);
+        alert('خطأ أثناء إدراج السجل: ' + (err.message || 'تعذر الاتصال بالخادم الرئيسي'));
+      } finally {
+        setIsSaving(false);
+      }
     };
 
     const filteredLetters = useMemo(() => {
-      let filtered = letters.filter(l => 
-        l.id.toString().toLowerCase().includes(searchTerm.toLowerCase()) || 
-        l.customerName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-        l.subject.toLowerCase().includes(searchTerm.toLowerCase())
-      );
+      if (!Array.isArray(letters)) return [];
+
+      const term = (searchTerm || '').trim().toLowerCase();
+
+      let filtered = term
+        ? letters.filter(l => {
+            if (!l) return false;
+            const idMatch = String(l.id || '').toLowerCase().includes(term);
+            const toMatch = String(l.customerName || l.to || '').toLowerCase().includes(term);
+            const subjMatch = String(l.subject || '').toLowerCase().includes(term);
+            return idMatch || toMatch || subjMatch;
+          })
+        : [...letters];
 
       filtered.sort((a, b) => {
-        let valA, valB;
+        let valA: any = '';
+        let valB: any = '';
         switch (sortConfig.key) {
-          case 'id': valA = a.id; valB = b.id; break;
-          case 'date': valA = new Date(a.date).getTime(); valB = new Date(b.date).getTime(); break;
-          case 'customerName': valA = a.customerName; valB = b.customerName; break;
-          case 'subject': valA = a.subject; valB = b.subject; break;
-          default: valA = new Date(a.date).getTime(); valB = new Date(b.date).getTime();
+          case 'id': 
+            valA = String(a?.id || ''); 
+            valB = String(b?.id || ''); 
+            break;
+          case 'date': 
+            valA = a?.date ? new Date(a.date).getTime() : 0; 
+            valB = b?.date ? new Date(b.date).getTime() : 0; 
+            break;
+          case 'customerName': 
+            valA = String(a?.customerName || a?.to || ''); 
+            valB = String(b?.customerName || b?.to || ''); 
+            break;
+          case 'subject': 
+            valA = String(a?.subject || ''); 
+            valB = String(b?.subject || ''); 
+            break;
+          default: 
+            valA = a?.date ? new Date(a.date).getTime() : 0; 
+            valB = b?.date ? new Date(b.date).getTime() : 0;
         }
         if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
         if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
@@ -245,6 +445,10 @@ export const LettersView = ({ searchTerm = '' }: any) => {
       });
       return filtered;
     }, [letters, searchTerm, sortConfig]);
+
+    useEffect(() => {
+      setCurrentPage(1);
+    }, [searchTerm, sortConfig]);
 
     const paginatedLetters = filteredLetters.slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage);
     const totalLettersPages = Math.ceil(filteredLetters.length / rowsPerPage);
@@ -272,24 +476,137 @@ export const LettersView = ({ searchTerm = '' }: any) => {
         <div className="max-w-5xl mx-auto bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
           <div className="flex justify-between items-center border-b pb-4 mb-6">
             <h2 className="text-2xl font-bold text-slate-800">{editingLetterId ? `تعديل رسالة (${editingLetterId})` : 'إنشاء رسالة / مخاطبة / عرض سعر'}</h2>
-            <button onClick={() => { setIsCreating(false); setEditingLetterId(null); setLetterForm({ subject: '', customerId: '', senderName: '', senderTitle: '', blocks: [] }); }} className="text-slate-500 hover:text-slate-800"><X className="w-6 h-6" /></button>
+            <button onClick={resetLetterForm} className="text-slate-500 hover:text-slate-800"><X className="w-6 h-6" /></button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
             <div className="z-50 relative">
               <label className="block text-sm font-bold text-slate-700 mb-2">إلى السادة (الزبون / الجهة) *</label>
-              <CustomerSelect value={letterForm.customerId} onChange={v => setLetterForm({...letterForm, customerId: v})} />
+              <CustomerSelect 
+                value={letterForm.customerId} 
+                onChange={v => {
+                  const cust = customers.find(c => c.id === v);
+                  setLetterForm({
+                    ...letterForm,
+                    customerId: v,
+                    customerName: cust ? cust.name : letterForm.customerName
+                  });
+                }} 
+              />
             </div>
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-2">الموضوع (عنوان الرسالة) *</label>
               <input type="text" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none focus:border-blue-500 font-bold" placeholder="مثال: عرض سعر لتصنيع كرفان..." value={letterForm.subject} onChange={e => setLetterForm({...letterForm, subject: e.target.value})} />
             </div>
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-2">اسم المرسل / الموقّع</label>
-              <input type="text" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none focus:border-blue-500" placeholder="مثال: م. أحمد محمد" value={letterForm.senderName} onChange={e => setLetterForm({...letterForm, senderName: e.target.value})} />
-            </div>
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-2">صفة المرسل (المنصب)</label>
-              <input type="text" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none focus:border-blue-500" placeholder="مثال: المدير العام" value={letterForm.senderTitle} onChange={e => setLetterForm({...letterForm, senderTitle: e.target.value})} />
+
+            {/* Official Sender / Signatory Approval Card */}
+            <div className="md:col-span-2 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 border-b border-slate-200 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <UserCheck className="w-4 h-4 text-indigo-600" />
+                  <span className="font-bold text-slate-800 text-sm">المسؤول عن توقيع واعتماد الرسالة (المرسل)</span>
+                </div>
+                {users && users.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-500 font-medium">اختيار من المستخدمين:</span>
+                    <select
+                      value={letterForm.senderUserId || ''}
+                      onChange={e => {
+                        const uId = e.target.value;
+                        if (!uId) {
+                          setLetterForm(prev => ({ ...prev, senderUserId: '' }));
+                          return;
+                        }
+                        const selected = users.find((u: any) => u.id === uId);
+                        if (selected) {
+                          setLetterForm(prev => ({
+                            ...prev,
+                            senderUserId: selected.id,
+                            senderName: selected.displayName || selected.username,
+                            senderTitle: selected.jobTitle || 'المدير العام',
+                            senderSignature: selected.signature || '',
+                            senderStamp: selected.stamp || ''
+                          }));
+                        }
+                      }}
+                      className="text-xs p-1.5 border border-slate-300 rounded-lg bg-white outline-none focus:border-indigo-500 font-semibold text-slate-700"
+                    >
+                      <option value="">-- إدخال مخصص --</option>
+                      {users.map((u: any) => (
+                        <option key={u.id} value={u.id}>
+                          {u.displayName || u.username} ({u.jobTitle || 'بدون صفة'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">اسم المرسل / الموقّع *</label>
+                  <input
+                    type="text"
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-lg outline-none focus:border-indigo-500 text-sm font-semibold"
+                    placeholder="مثال: م. أحمد محمد"
+                    value={letterForm.senderName}
+                    onChange={e => setLetterForm({...letterForm, senderName: e.target.value})}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">صفة المرسل (المسمى الوظيفي) *</label>
+                  <input
+                    type="text"
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-lg outline-none focus:border-indigo-500 text-sm font-semibold"
+                    placeholder="مثال: المدير العام / مدير المبيعات"
+                    value={letterForm.senderTitle}
+                    onChange={e => setLetterForm({...letterForm, senderTitle: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-200 text-xs">
+                <div className="flex items-center gap-4 flex-wrap">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-slate-600">التوقيع الرقمي:</span>
+                    {letterForm.senderSignature ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-bold">
+                        <Check className="w-3.5 h-3.5" /> مرفق ومعتمد
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 italic">غير متوفر (سيترك فراغ للتوقيع اليدوي)</span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-slate-600">الختم الرسمي:</span>
+                    {letterForm.senderStamp ? (
+                      <span className="inline-flex items-center gap-1 text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 font-bold">
+                        <Check className="w-3.5 h-3.5" /> مرفق ومعتمد
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 italic">غير متوفر (سيتم الختم يدوياً)</span>
+                    )}
+                  </div>
+                </div>
+
+                {(letterForm.senderSignature || letterForm.senderStamp) && (
+                  <div className="flex items-center gap-3">
+                    {letterForm.senderSignature && (
+                      <div className="flex items-center gap-1 bg-white p-1 rounded border border-slate-200">
+                        <img src={letterForm.senderSignature} alt="توقيع" className="h-6 max-w-[80px] object-contain" />
+                        <span className="text-[10px] text-slate-400">توقيع</span>
+                      </div>
+                    )}
+                    {letterForm.senderStamp && (
+                      <div className="flex items-center gap-1 bg-white p-1 rounded border border-slate-200">
+                        <img src={letterForm.senderStamp} alt="ختم" className="h-6 max-w-[80px] object-contain" />
+                        <span className="text-[10px] text-slate-400">ختم</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           
@@ -428,14 +745,29 @@ export const LettersView = ({ searchTerm = '' }: any) => {
           </div>
 
           <div className="flex justify-end gap-4">
-            <button onClick={() => { setIsCreating(false); setEditingLetterId(null); setLetterForm({ subject: '', customerId: '', senderName: '', senderTitle: '', blocks: [] }); }} className="px-6 py-2 rounded-lg font-bold text-slate-600 hover:bg-slate-200">إلغاء</button>
+            <button disabled={isSaving} onClick={resetLetterForm} className="px-6 py-2 rounded-lg font-bold text-slate-600 hover:bg-slate-200 disabled:opacity-50">إلغاء</button>
             {editingLetterId ? (
               <>
-                <button onClick={handleSaveAsNew} className="bg-emerald-600 text-white px-8 py-2 rounded-lg font-bold hover:bg-emerald-700 flex items-center gap-2"><Plus className="w-5 h-5" /> حفظ كجديد</button>
-                <button onClick={handleSave} className="bg-blue-600 text-white px-8 py-2 rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2"><Save className="w-5 h-5" /> حفظ التعديلات</button>
+                {hasPermission('invoices', 'create') && (
+                  <button disabled={isSaving} onClick={handleSaveAsNew} className="bg-emerald-600 text-white px-8 py-2 rounded-lg font-bold hover:bg-emerald-700 flex items-center gap-2 disabled:opacity-50">
+                    {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
+                    حفظ كجديد
+                  </button>
+                )}
+                {hasPermission('invoices', 'edit') && (
+                  <button disabled={isSaving} onClick={handleSave} className="bg-blue-600 text-white px-8 py-2 rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2 disabled:opacity-50">
+                    {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                    حفظ التعديلات
+                  </button>
+                )}
               </>
             ) : (
-              <button onClick={handleSave} className="bg-blue-600 text-white px-8 py-2 rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2"><Save className="w-5 h-5" /> حفظ ومعاينة الطباعة</button>
+              hasPermission('invoices', 'create') && (
+                <button disabled={isSaving} onClick={handleSave} className="bg-blue-600 text-white px-8 py-2 rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2 disabled:opacity-50">
+                  {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                  حفظ ومعاينة الطباعة
+                </button>
+              )
             )}
           </div>
         </div>
@@ -499,8 +831,11 @@ export const LettersView = ({ searchTerm = '' }: any) => {
                 </div>
               </div>
               <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-2">
-                <button onClick={() => setShowLegacyImport(false)} className="px-4 py-2 rounded text-slate-600 hover:bg-slate-200 text-sm font-bold">إلغاء</button>
-                <button onClick={handleSaveLegacy} className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 text-sm font-bold">إدراج السجل</button>
+                <button disabled={isSaving} onClick={() => setShowLegacyImport(false)} className="px-4 py-2 rounded text-slate-600 hover:bg-slate-200 text-sm font-bold">إلغاء</button>
+                <button disabled={isSaving} onClick={handleSaveLegacy} className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 text-sm font-bold flex items-center gap-2 disabled:opacity-50">
+                  {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  إدراج السجل
+                </button>
               </div>
             </div>
           </div>
@@ -516,8 +851,12 @@ export const LettersView = ({ searchTerm = '' }: any) => {
             </button>
           </div>
           <div className="flex justify-end gap-2">
-            <button onClick={() => setShowLegacyImport(true)} className="bg-slate-800 text-white px-4 py-2 rounded-lg font-bold hover:bg-slate-900 text-sm flex items-center gap-2"><Database className="w-4 h-4" /> إدراج سجل خارجي</button>
-            <button onClick={() => { setEditingLetterId(null); setLetterForm({ subject: '', customerId: '', senderName: '', senderTitle: '', blocks: [] }); setIsCreating(true); }} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 text-sm flex items-center gap-2"><Plus className="w-4 h-4" /> إنشاء رسالة جديدة</button>
+            {hasPermission('invoices', 'create') && (
+              <>
+                <button onClick={() => setShowLegacyImport(true)} className="bg-slate-800 text-white px-4 py-2 rounded-lg font-bold hover:bg-slate-900 text-sm flex items-center gap-2"><Database className="w-4 h-4" /> إدراج سجل خارجي</button>
+                <button onClick={() => { setEditingLetterId(null); setLetterForm(getDefaultLetterForm()); setIsCreating(true); }} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 text-sm flex items-center gap-2"><Plus className="w-4 h-4" /> إنشاء رسالة جديدة</button>
+              </>
+            )}
           </div>
         </div>
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -536,14 +875,18 @@ export const LettersView = ({ searchTerm = '' }: any) => {
             <tbody className="divide-y divide-slate-100">
               {paginatedLetters.map(letter => (
                 <tr key={letter.id} className="hover:bg-slate-50">
-                  <td className="p-4 font-mono font-bold text-slate-700 whitespace-nowrap">{letter.id}</td>
-                  <td className="p-4 whitespace-nowrap">{new Date(letter.date).toLocaleDateString('ar-LY')}</td>
-                  <td className="p-4 font-bold">{letter.customerName}</td>
-                  <td className="p-4">{letter.subject}</td>
+                  <td className="p-4 font-mono font-bold text-slate-700 break-words whitespace-normal leading-relaxed max-w-xs md:max-w-sm lg:max-w-md">{letter.id}</td>
+                  <td className="p-4 whitespace-nowrap">{letter.date ? new Date(letter.date).toLocaleDateString('ar-LY') : '—'}</td>
+                  <td className="p-4 font-bold">{letter.customerName || letter.to || '—'}</td>
+                  <td className="p-4">{letter.subject || '—'}</td>
                   <td className="p-4 text-center">
                     <button onClick={() => setPrintData({ type: 'LETTER', data: letter })} className="text-blue-600 hover:text-blue-800 bg-blue-50 p-2 rounded-lg" title="طباعة / تصدير PDF"><Printer className="w-5 h-5" /></button>
-                    <button onClick={() => handleEditLetter(letter)} className="text-orange-500 hover:text-orange-700 bg-orange-50 p-2 rounded-lg mr-2" title="تعديل"><Edit className="w-5 h-5" /></button>
-                    <button onClick={() => { if(window.confirm('هل أنت متأكد من حذف هذه الرسالة؟')) setLetters(letters.filter(l => l.id !== letter.id)) }} className="text-red-500 hover:text-red-700 bg-red-50 p-2 rounded-lg mr-2" title="حذف"><Trash2 className="w-5 h-5" /></button>
+                    {hasPermission('invoices', 'edit') && (
+                      <button onClick={() => handleEditLetter(letter)} className="text-orange-500 hover:text-orange-700 bg-orange-50 p-2 rounded-lg mr-2" title="تعديل"><Edit className="w-5 h-5" /></button>
+                    )}
+                    {hasPermission('invoices', 'delete') && (
+                      <button onClick={() => { if (!hasPermission('invoices', 'delete')) return alert('ليس لديك صلاحية'); if(window.confirm('هل أنت متأكد من حذف هذه الرسالة؟')) setLetters(letters.filter(l => l.id !== letter.id)); }} className="text-red-500 hover:text-red-700 bg-red-50 p-2 rounded-lg mr-2" title="حذف"><Trash2 className="w-5 h-5" /></button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -562,20 +905,24 @@ export const LettersView = ({ searchTerm = '' }: any) => {
                 <div key={letter.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 transition-shadow hover:shadow-md flex flex-col">
                   <div className="flex justify-between items-start mb-3 border-b border-slate-100 pb-3">
                     <div>
-                      <span className="font-mono text-xs font-bold text-slate-700 bg-slate-100 px-2 py-1 rounded inline-block mb-2">{letter.id}</span>
-                      <div className="text-xs text-slate-500 flex items-center gap-1 font-bold"><Calendar className="w-3 h-3" /> {new Date(letter.date).toLocaleDateString('ar-LY')}</div>
+                      <span className="font-mono text-xs font-bold text-slate-700 bg-slate-100 px-2 py-1 rounded inline-block mb-2 break-words whitespace-normal max-w-full leading-relaxed">{letter.id}</span>
+                      <div className="text-xs text-slate-500 flex items-center gap-1 font-bold"><Calendar className="w-3 h-3" /> {letter.date ? new Date(letter.date).toLocaleDateString('ar-LY') : '—'}</div>
                     </div>
                     <div className="flex gap-1">
                       <button onClick={() => setPrintData({ type: 'LETTER', data: letter })} className="text-blue-600 hover:bg-blue-50 p-1.5 rounded transition-colors" title="طباعة / تصدير PDF"><Printer className="w-4 h-4" /></button>
-                      <button onClick={() => handleEditLetter(letter)} className="text-orange-500 hover:bg-orange-50 p-1.5 rounded transition-colors" title="تعديل"><Edit className="w-4 h-4" /></button>
-                      <button onClick={() => { if(window.confirm('هل أنت متأكد من حذف هذه الرسالة؟')) setLetters(letters.filter(l => l.id !== letter.id)) }} className="text-red-500 hover:bg-red-50 p-1.5 rounded transition-colors" title="حذف"><Trash2 className="w-4 h-4" /></button>
+                      {hasPermission('invoices', 'edit') && (
+                        <button onClick={() => handleEditLetter(letter)} className="text-orange-500 hover:bg-orange-50 p-1.5 rounded transition-colors" title="تعديل"><Edit className="w-4 h-4" /></button>
+                      )}
+                      {hasPermission('invoices', 'delete') && (
+                        <button onClick={() => { if (!hasPermission('invoices', 'delete')) return alert('ليس لديك صلاحية'); if(window.confirm('هل أنت متأكد من حذف هذه الرسالة؟')) setLetters(letters.filter(l => l.id !== letter.id)); }} className="text-red-500 hover:bg-red-50 p-1.5 rounded transition-colors" title="حذف"><Trash2 className="w-4 h-4" /></button>
+                      )}
                     </div>
                   </div>
                   <div className="flex-1">
                     <div className="text-xs uppercase font-bold text-slate-400 mb-1">إلى السادة</div>
-                    <div className="font-black text-slate-800 mb-3">{letter.customerName}</div>
+                    <div className="font-black text-slate-800 mb-3">{letter.customerName || letter.to || '—'}</div>
                     <div className="text-xs uppercase font-bold text-slate-400 mb-1">الموضوع</div>
-                    <div className="font-medium text-slate-700 text-sm leading-snug">{letter.subject}</div>
+                    <div className="font-medium text-slate-700 text-sm leading-snug">{letter.subject || '—'}</div>
                   </div>
                 </div>
               ))

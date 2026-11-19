@@ -92,8 +92,9 @@ export const EstimateCategoriesView = () => {
                     <td className="p-4 text-center">
                       {editingId !== cat.id && (
                         <div className="flex justify-center gap-2">
-                          <button onClick={() => { setEditingId(cat.id); setEditName(cat.name); }} className="text-blue-500 hover:text-blue-700 bg-blue-50 p-2 rounded" title="تعديل"><Edit className="w-4 h-4" /></button>
+                          {hasPermission('estimateCategories', 'edit') && <button onClick={() => { setEditingId(cat.id); setEditName(cat.name); }} className="text-blue-500 hover:text-blue-700 bg-blue-50 p-2 rounded" title="تعديل"><Edit className="w-4 h-4" /></button>}
                           {hasPermission('estimateCategories', 'delete') && <button onClick={() => deleteCategory(cat.id)} className="text-red-500 hover:text-red-700 bg-red-50 p-2 rounded" title="حذف"><Trash2 className="w-4 h-4" /></button>}
+                          {!hasPermission('estimateCategories', 'edit') && !hasPermission('estimateCategories', 'delete') && <span className="text-xs text-slate-400">عرض فقط</span>}
                         </div>
                       )}
                     </td>

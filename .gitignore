@@ -29,3 +29,6 @@ dist-ssr
 release
 Output-App
 build-release
+
+cloudflared*
+
